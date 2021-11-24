@@ -31,7 +31,7 @@ pub mod nft_candy_machine {
 
     pub fn mint_nft<'info>(ctx: Context<'_, '_, '_, 'info, MintNFT<'info>>) -> ProgramResult {
         let candy_machine = &mut ctx.accounts.candy_machine;
-        let config = &ctx.accounts.config;
+        let config = &mut ctx.accounts.config;
         let clock = &ctx.accounts.clock;
 
         match candy_machine.data.go_live_date {
@@ -49,10 +49,14 @@ pub mod nft_candy_machine {
             }
         }
 
-        if candy_machine.items_redeemed >= candy_machine.data.items_available {
-            return Err(ErrorCode::CandyMachineEmpty.into());
-        }
+        // if candy_machine.items_redeemed >= candy_machine.data.items_available {
+        //     return Err(ErrorCode::CandyMachineEmpty.into());
+        // }
 
+        if config.data.minters.contains(&*ctx.accounts.wallet.key) {
+            return Err(ErrorCode::MintMismatch.into());
+        }
+        msg!("hey there! {}", &(ctx.accounts.wallet.key.clone()).to_string());
         if let Some(mint) = candy_machine.token_mint {
             let token_account_info = &ctx.remaining_accounts[0];
             let transfer_authority_info = &ctx.remaining_accounts[1];
@@ -76,6 +80,7 @@ pub mod nft_candy_machine {
                 token_program: ctx.accounts.token_program.to_account_info(),
                 amount: candy_machine.data.price,
             })?;
+
         } else {
             if ctx.accounts.payer.lamports() < candy_machine.data.price {
                 return Err(ErrorCode::NotEnoughSOL.into());
@@ -96,15 +101,18 @@ pub mod nft_candy_machine {
         }
 
         let config_line = get_config_line(
-            &config.to_account_info(),
-            candy_machine.items_redeemed as usize,
+            &config.to_account_info(), 0,
+            // candy_machine.items_available as usize,
         )?;
 
-        candy_machine.items_redeemed = candy_machine
-            .items_redeemed
-            .checked_add(1)
-            .ok_or(ErrorCode::NumericalOverflowError)?;
-
+        // candy_machine.items_redeemed = candy_machine
+        //     .items_redeemed
+        //     .checked_add(2)
+        //     .ok_or(ErrorCode::NumericalOverflowError)?;
+        msg!("items redeemed: {}", &candy_machine.items_redeemed);
+        // let minters_vec = &mut ctx.accounts.candy_machine.minters;
+        // candy_machine.things = candy_machine.things.checked_add(1)
+        // .ok_or(ErrorCode::NumericalOverflowError)?;
         let config_key = config.key();
         let authority_seeds = [
             PREFIX.as_bytes(),
@@ -113,6 +121,7 @@ pub mod nft_candy_machine {
             &[candy_machine.bump],
         ];
 
+        config.data.minters.push(ctx.accounts.wallet.key.clone());
         let mut creators: Vec<metaplex_token_metadata::state::Creator> =
             vec![metaplex_token_metadata::state::Creator {
                 address: candy_machine.key(),
@@ -211,6 +220,7 @@ pub mod nft_candy_machine {
             &[&authority_seeds],
         )?;
 
+
         Ok(())
     }
 
@@ -220,7 +230,6 @@ pub mod nft_candy_machine {
         go_live_date: Option<i64>,
     ) -> ProgramResult {
         let candy_machine = &mut ctx.accounts.candy_machine;
-
         if let Some(p) = price {
             candy_machine.data.price = p;
         }
@@ -353,6 +362,7 @@ pub mod nft_candy_machine {
                 position_from_right
             );
             if old_value_in_vec != data[my_position_in_vec] {
+                
                 msg!("Increasing count");
                 new_count = new_count
                     .checked_add(1)
@@ -377,11 +387,13 @@ pub mod nft_candy_machine {
         if data.uuid.len() != 6 {
             return Err(ErrorCode::UuidMustBeExactly6Length.into());
         }
+        msg!("Initializing candy machine");
         candy_machine.data = data;
         candy_machine.wallet = *ctx.accounts.wallet.key;
         candy_machine.authority = *ctx.accounts.authority.key;
         candy_machine.config = ctx.accounts.config.key();
         candy_machine.bump = bump;
+        // candy_machine.minters = vec![];
         if ctx.remaining_accounts.len() > 0 {
             let token_mint_info = &ctx.remaining_accounts[0];
             let _token_mint: Mint = assert_initialized(&token_mint_info)?;
@@ -457,6 +469,7 @@ pub struct InitializeCandyMachine<'info> {
     #[account(address = system_program::ID)]
     system_program: AccountInfo<'info>,
     rent: Sysvar<'info, Rent>,
+    // minters: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -541,6 +554,7 @@ pub struct CandyMachine {
     pub data: CandyMachineData,
     pub items_redeemed: u64,
     pub bump: u8,
+    pub things: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
@@ -584,6 +598,8 @@ pub struct ConfigData {
     pub is_mutable: bool,
     pub retain_authority: bool,
     pub max_number_of_lines: u32,
+    pub minters: Vec<Pubkey>,
+
 }
 
 pub fn get_config_count(data: &Ref<&mut [u8]>) -> core::result::Result<usize, ProgramError> {
